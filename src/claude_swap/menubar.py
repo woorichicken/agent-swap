@@ -512,7 +512,7 @@ def framework_build_warning(
 
     if install_method == "uv":
         remedy = (
-            "  uv tool install --managed-python --force 'claude-swap[menubar]'"
+            "  uv tool install --managed-python --force 'agent-swap[menubar] @ git+https://github.com/woorichicken/agent-swap'"
         )
     elif install_method == "pipx":
         remedy = (
