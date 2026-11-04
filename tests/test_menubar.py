@@ -637,3 +637,29 @@ class TestFrameworkBuildWarning:
         # The symptom is that everything looks healthy, so say so.
         msg = menubar.framework_build_warning("Python", "uv", "26.6.2")
         assert "logs nothing" in msg
+
+
+def test_agent_icon_from_installed_app_and_missing_app(tmp_path, monkeypatch):
+    app = tmp_path / "Fake.app" / "Contents"
+    (app / "Resources").mkdir(parents=True)
+    (app / "Info.plist").write_bytes(__import__("plistlib").dumps({"CFBundleIconFile": "icon"}))
+    (app / "Resources" / "icon.icns").write_bytes(b"x")
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(b"png")
+    monkeypatch.setattr(menubar, "AGENT_ICON_APPS", {"claude": str(tmp_path / "Fake.app"), "codex": str(tmp_path / "Missing.app")})
+    monkeypatch.setattr(menubar.subprocess, "run", fake_run)
+    out = menubar.agent_icon_path("claude", tmp_path / "icons")
+    assert out and out.endswith("claude.png") and calls[0][0] == "/usr/bin/sips"
+    assert menubar.agent_icon_path("claude", tmp_path / "icons") == out and len(calls) == 1  # cached
+    assert menubar.agent_icon_path("codex", tmp_path / "icons") is None
+    assert menubar.agent_icon_path("muse", tmp_path / "icons") is None
+
+
+def test_agent_of_line_and_usage_urls():
+    assert menubar.agent_of_line("ChatGPT Codex · 5h 0%") == "codex"
+    assert menubar.agent_of_line("Muse · 오늘 요청 1") == "muse"
+    assert menubar.agent_of_line("Other") is None
+    assert set(menubar.AGENT_USAGE_URLS) == {"codex", "muse"}

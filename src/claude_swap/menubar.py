@@ -21,6 +21,7 @@ import os
 import platform
 import plistlib
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -28,7 +29,7 @@ from dataclasses import asdict, dataclass, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
-from claude_swap import pace
+from claude_swap import pace, paths
 from claude_swap.exceptions import ClaudeSwitchError, CredentialReadError
 from claude_swap.printer import warning
 from claude_swap.switcher import SENTINEL_NOTES
@@ -41,6 +42,47 @@ SWITCH_HISTORY_LIMIT = 10
 NOTIFICATION_BUNDLE_ID = "com.claude-swap.menubar"
 
 
+
+
+# Logos come from apps already installed on this Mac (never bundled, never downloaded):
+# Claude accounts -> Claude.app, Codex -> ChatGPT.app. Missing app = no icon.
+AGENT_ICON_APPS = {"claude": "/Applications/Claude.app", "codex": "/Applications/ChatGPT.app"}
+# Clicking an agent line opens where that agent's usage/billing is shown.
+AGENT_USAGE_URLS = {
+    "codex": "https://chatgpt.com/codex/settings/usage",
+    "muse": "https://dev.meta.ai/",
+}
+
+
+def agent_icon_path(name: str, cache_dir: Path | None = None) -> str | None:
+    """PNG of an installed app's icon for menu items, cached; None when unavailable."""
+    app = AGENT_ICON_APPS.get(name)
+    if not app or not Path(app).is_dir():
+        return None
+    cache_dir = cache_dir or (paths.get_backup_root() / "cache" / "icons")
+    out = cache_dir / f"{name}.png"
+    if out.exists():
+        return str(out)
+    try:
+        info = plistlib.loads((Path(app) / "Contents" / "Info.plist").read_bytes())
+        icon = info.get("CFBundleIconFile") or "AppIcon"
+        icns = Path(app) / "Contents" / "Resources" / (icon if icon.endswith(".icns") else icon + ".icns")
+        if not icns.exists():
+            return None
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["/usr/bin/sips", "-s", "format", "png", "-Z", "32", str(icns), "--out", str(out)],
+                       check=True, capture_output=True, timeout=10)
+        return str(out) if out.exists() else None
+    except Exception:
+        return None
+
+
+def agent_of_line(line: str) -> str | None:
+    if line.startswith("ChatGPT Codex"):
+        return "codex"
+    if line.startswith("Muse"):
+        return "muse"
+    return None
 
 # Codex/Muse usage refresh cadence for the menu bar (seconds).
 OTHER_AGENTS_INTERVAL = 300
@@ -809,6 +851,7 @@ def run(switcher) -> int:
                         num, email, display, alias=alias, disabled=disabled, fetched_at=fetched_at
                     ),
                     callback=self._make_switch_to(num),
+                    icon=agent_icon_path("claude"), dimensions=[16, 16], template=False,
                 )
                 item.state = 1 if is_active else 0
                 account_items.append(item)
@@ -818,7 +861,15 @@ def run(switcher) -> int:
             other_lines = getattr(self, "_other_agent_lines", None) or []
             if other_lines:
                 account_items.append(None)
-                account_items.extend(rumps.MenuItem(line, callback=None) for line in other_lines)
+                for line in other_lines:
+                    agent = agent_of_line(line)
+                    url = AGENT_USAGE_URLS.get(agent or "")
+                    account_items.append(rumps.MenuItem(
+                        line,
+                        # A callback keeps the row enabled (macOS greys out items without one).
+                        callback=(lambda _sender, u=url: subprocess.Popen(["/usr/bin/open", u])) if url else None,
+                        icon=agent_icon_path(agent) if agent else None, dimensions=[16, 16], template=False,
+                    ))
 
             self.menu = [
                 *account_items,
