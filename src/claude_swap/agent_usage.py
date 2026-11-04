@@ -63,38 +63,38 @@ def _window(value: object) -> dict | None:
     if value is None:
         return None
     if not isinstance(value, dict):
-        raise ValueError("사용량 구간 형식 오류")
+        raise ValueError("malformed usage window")
     percent = value.get("usedPercent")
     reset = value.get("resetsAt")
     if not _number(percent) or percent < 0:
-        raise ValueError("usedPercent 형식 오류")
+        raise ValueError("malformed usedPercent")
     if reset is not None and (not _number(reset) or reset < 0):
-        raise ValueError("resetsAt 형식 오류")
+        raise ValueError("malformed resetsAt")
     return {"usedPercent": percent, "resetsAt": reset}
 
 
 def _codex_limits(result: object) -> dict:
     if not isinstance(result, dict) or not isinstance(result.get("rateLimits"), dict):
-        raise ValueError("rateLimits 응답 없음")
+        raise ValueError("no rateLimits in response")
     limits = result["rateLimits"]
     primary = _window(limits.get("primary"))
     secondary = _window(limits.get("secondary"))
     if primary is None and secondary is None:
-        raise ValueError("사용량 구간 없음")
+        raise ValueError("no usage windows")
     credits = limits.get("credits")
     if credits is None:
         credits = {}
     if not isinstance(credits, dict):
-        raise ValueError("credits 형식 오류")
+        raise ValueError("malformed credits")
     balance = credits.get("balance")
     has_credits = credits.get("hasCredits")
     plan = limits.get("planType")
     if balance is not None and not (isinstance(balance, str) or _number(balance)):
-        raise ValueError("credits.balance 형식 오류")
+        raise ValueError("malformed credits.balance")
     if has_credits is not None and not isinstance(has_credits, bool):
-        raise ValueError("credits.hasCredits 형식 오류")
+        raise ValueError("malformed credits.hasCredits")
     if plan is not None and not isinstance(plan, str):
-        raise ValueError("planType 형식 오류")
+        raise ValueError("malformed planType")
     return {
         "status": "ok", "primary": primary, "secondary": secondary,
         "credits": {"balance": balance, "hasCredits": has_credits},
@@ -105,7 +105,7 @@ def _codex_limits(result: object) -> dict:
 def read_codex_usage(*, timeout: float = QUERY_TIMEOUT_SECONDS) -> dict:
     binary = shutil.which(os.environ.get("ASWAP_CODEX_BIN", "codex"))
     if binary is None:
-        return _unavailable("실행 파일 없음")
+        return _unavailable("not installed")
     deadline = time.monotonic() + timeout
     try:
         with _agent_process([binary, "app-server"]) as process:
@@ -124,35 +124,35 @@ def read_codex_usage(*, timeout: float = QUERY_TIMEOUT_SECONDS) -> dict:
                 while True:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0 or not selector.select(remaining):
-                        return _unavailable("시간 초과")
+                        return _unavailable("timed out")
                     chunk = os.read(process.stdout.fileno(), 65536)
                     if not chunk:
-                        return _unavailable("응답 없이 프로세스 종료")
+                        return _unavailable("exited without a response")
                     received += len(chunk)
                     if received > MAX_RESPONSE_BYTES:
-                        return _unavailable("응답 크기 초과")
+                        return _unavailable("response too large")
                     pending += chunk
                     while b"\n" in pending:
                         line, pending = pending.split(b"\n", 1)
                         message = json.loads(line)
                         if not isinstance(message, dict):
-                            raise ValueError("JSON-RPC 응답 형식 오류")
+                            raise ValueError("malformed JSON-RPC response")
                         if "method" in message:
                             continue
                         expected_id = 2 if initialized else 1
                         if message.get("id") != expected_id:
                             continue  # app-server also emits notifications.
                         if "error" in message:
-                            raise ValueError(f"JSON-RPC 오류 (요청 {expected_id})")
+                            raise ValueError(f"JSON-RPC error (request {expected_id})")
                         if initialized:
                             return _codex_limits(message.get("result"))
                         if not isinstance(message.get("result"), dict):
-                            raise ValueError("initialize 응답 형식 오류")
+                            raise ValueError("malformed initialize response")
                         initialized = True
                         send({"method": "initialized"})
                         send({"id": 2, "method": "account/rateLimits/read"})
     except (OSError, ValueError, OverflowError) as exc:
-        return _unavailable(f"응답/실행 오류: {type(exc).__name__}: {exc}")
+        return _unavailable(f"query failed: {type(exc).__name__}: {exc}")
 
 
 def read_muse_usage(*, timeout: float = QUERY_TIMEOUT_SECONDS) -> dict | None:
@@ -163,25 +163,25 @@ def read_muse_usage(*, timeout: float = QUERY_TIMEOUT_SECONDS) -> dict | None:
         with _agent_process([binary, "usage", "--json"]) as process:
             output, _ = process.communicate(timeout=timeout)
             if process.returncode:
-                return _unavailable(f"종료 코드 {process.returncode}")
+                return _unavailable(f"exit code {process.returncode}")
             if len(output) > MAX_RESPONSE_BYTES:
-                return _unavailable("응답 크기 초과")
+                return _unavailable("response too large")
             result = json.loads(output)
             if (
                 not isinstance(result, dict) or result.get("schemaVersion") != 1
                 or "allowance" not in result
                 or (result["allowance"] is not None and not isinstance(result["allowance"], dict))
             ):
-                raise ValueError("Muse 사용량 응답 형식 오류")
+                raise ValueError("malformed Muse usage response")
             return {
                 "status": "ok", "allowance": result["allowance"],
                 "reason": result.get("reason"),
                 "today": read_muse_local_usage(),
             }
     except subprocess.TimeoutExpired:
-        return _unavailable("시간 초과")
+        return _unavailable("timed out")
     except (OSError, ValueError) as exc:
-        return _unavailable(f"응답/실행 오류: {type(exc).__name__}: {exc}")
+        return _unavailable(f"query failed: {type(exc).__name__}: {exc}")
 
 
 def _muse_home() -> Path:
@@ -266,7 +266,7 @@ def read_other_agents() -> dict:
             return reader()
         except Exception as exc:
             # Optional usage must never prevent listing the Claude accounts.
-            return _unavailable(f"응답/실행 오류: {type(exc).__name__}")
+            return _unavailable(f"query failed: {type(exc).__name__}")
 
     # Both deadlines start together, keeping list's added wait near 10s.
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -296,33 +296,52 @@ def _credits_text(balance: object) -> str:
         return _single_line(balance)
 
 
+AGENT_LABELS = {"codex": "Codex", "muse": "Muse"}
+
+
+def agent_menu_rows(name: str, reading: dict) -> tuple[str, list[str]]:
+    """Short headline for one agent plus detail lines (menu bar submenu / CLI)."""
+    if reading["status"] != "ok":
+        return f"unavailable ({_single_line(reading['reason'])})", []
+    if name == "codex":
+        def percent(key: str) -> str:
+            window = reading[key]
+            return f"{window['usedPercent']:g}%" if window is not None else "n/a"
+
+        credits = reading["credits"]
+        balance = credits["balance"]
+        if balance is None:
+            balance = "none" if credits["hasCredits"] is False else "n/a"
+        details = [f"Credits {_credits_text(balance)}"]
+        if reading.get("planType"):
+            details.append(f"Plan {_single_line(reading['planType'])}")
+        return f"5h {percent('primary')} · weekly {percent('secondary')}", details
+    if reading["allowance"] is None:
+        allowance = f"no plan allowance ({_single_line(reading.get('reason') or 'unknown')})"
+        today = reading.get("today")
+        if not today:
+            return allowance, []
+        cost = f"~${today['cost']:.2f}" + ("" if today["priced"] else "+")
+        return f"today {today['requests']} req · {cost}", [
+            f"Input {_tokens(today['input'])} (cached {_tokens(today['cached'])}) · output {_tokens(today['output'])}",
+            "Cost is estimated from local session logs and catalog prices",
+            allowance[0].upper() + allowance[1:],
+        ]
+    summary = " · ".join(
+        f"{_single_line(key)}:{_single_line(json.dumps(value, ensure_ascii=False))}"
+        for key, value in reading["allowance"].items()
+    ) or "allowance details empty"
+    return summary, []
+
+
 def format_other_agents(agents: dict) -> list[str]:
+    """One line per agent: ``Label · headline · details``."""
     lines = []
     for name, reading in agents.items():
-        label = "ChatGPT Codex" if name == "codex" else "Muse"
-        if reading["status"] != "ok":
-            summary = f"못 읽음({_single_line(reading['reason'])})"
-        elif name == "codex":
-            def percent(key: str) -> str:
-                window = reading[key]
-                return f"{window['usedPercent']:g}%" if window is not None else "미제공"
-
-            credits = reading["credits"]
-            balance = credits["balance"]
-            if balance is None:
-                balance = "없음" if credits["hasCredits"] is False else "미제공"
-            summary = f"5h {percent('primary')} · 주간 {percent('secondary')} · 크레딧 {_credits_text(balance)}"
-        elif reading["allowance"] is None:
-            summary = f"구독 한도 없음 ({_single_line(reading.get('reason') or 'unknown')})"
-            today = reading.get("today")
-            if today:
-                cost = f"추정 ${today['cost']:.2f}" + ("" if today["priced"] else "+")
-                summary = (f"오늘 요청 {today['requests']} · 입력 {_tokens(today['input'])}"
-                           f"(캐시 {_tokens(today['cached'])}) · 출력 {_tokens(today['output'])} · {cost} · " + summary)
-        else:
-            summary = " · ".join(
-                f"{_single_line(key)}:{_single_line(json.dumps(value, ensure_ascii=False))}"
-                for key, value in reading["allowance"].items()
-            ) or "구독 한도 정보 없음"
-        lines.append(f"{label} · {summary}")
+        headline, details = agent_menu_rows(name, reading)
+        if name == "codex":
+            details = [d for d in details if d.startswith("Credits")]
+        elif name == "muse":
+            details = [d for d in details if not d.startswith("Cost is")]
+        lines.append(" · ".join([AGENT_LABELS.get(name, name), headline, *details]))
     return lines

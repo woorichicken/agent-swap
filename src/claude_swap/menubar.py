@@ -52,6 +52,7 @@ AGENT_ICON_APPS = {"claude": "/Applications/Claude.app", "codex": "/Applications
 # (dev.meta.ai allows it in robots.txt — checked 2026-11-04).
 AGENT_ICON_URLS = {"muse": "https://dev.meta.ai/favicon.ico"}
 AGENT_USAGE_URLS = {
+    "claude": "https://claude.ai/settings/usage",
     "codex": "https://chatgpt.com/codex/settings/usage",
     "muse": "https://dev.meta.ai/",
 }
@@ -100,8 +101,25 @@ def _download_icon(name: str, out: Path) -> str | None:
         return None
 
 
+# Terminal commands per agent. Codex and Muse keep one login each, so "sign in"
+# replaces that agent's current login; agent-swap only reads their usage.
+AGENT_LOGIN_COMMANDS = {"codex": "codex login", "muse": "muse login"}
+AGENT_STATUS_COMMANDS = {"codex": ("Login status", "codex login status"),
+                         "muse": ("Usage details", "muse usage")}
+
+
+def open_in_terminal(command: str) -> None:
+    """Run a fixed agent command in a new Terminal window (login needs a browser/TTY)."""
+    script = f'tell application "Terminal"\nactivate\ndo script "{command}"\nend tell'
+    subprocess.Popen(["/usr/bin/osascript", "-e", script])
+
+
+def open_url(url: str) -> None:
+    subprocess.Popen(["/usr/bin/open", url])
+
+
 def agent_of_line(line: str) -> str | None:
-    if line.startswith("ChatGPT Codex"):
+    if line.startswith(("Codex", "ChatGPT Codex")):
         return "codex"
     if line.startswith("Muse"):
         return "muse"
@@ -170,6 +188,8 @@ class MenuBarSettings:
     title_scoped: bool = False  # append per-model weekly limits (e.g. Fable) to the title
     refresh_interval: int = 60
     auto_switch_enabled: bool = False
+    show_codex: bool = True  # Codex usage row in the menu
+    show_muse: bool = True  # Muse usage row in the menu
 
     @classmethod
     def load(cls, path: Path) -> "MenuBarSettings":
@@ -719,8 +739,8 @@ def run(switcher) -> int:
             if not full and now - getattr(self, "_other_agents_at", 0) < OTHER_AGENTS_INTERVAL:
                 return
             try:
-                from claude_swap.agent_usage import format_other_agents, read_other_agents
-                self._other_agent_lines = format_other_agents(read_other_agents())
+                from claude_swap.agent_usage import read_other_agents
+                self._other_agents = read_other_agents()
                 self._other_agents_at = now
             except Exception:
                 self.switcher._logger.debug("menubar other-agents read failed", exc_info=True)
@@ -787,7 +807,7 @@ def run(switcher) -> int:
                 )
             except Exception as e:  # never let a bad start crash the menu bar
                 self.switcher._logger.warning("auto-switch engine failed to start: %s", e)
-                rumps.notification("claude-swap", "Auto-switch failed to start", str(e))
+                rumps.notification("agent-swap", "Auto-switch failed to start", str(e))
                 return
             self._engine = engine
             threading.Thread(target=self._run_engine, args=(engine,), daemon=True).start()
@@ -820,17 +840,17 @@ def run(switcher) -> int:
                 events, self._engine_events = self._engine_events, []
             for ev in events:
                 if ev.kind == "switch" and not getattr(ev, "dry_run", False):
-                    rumps.notification("claude-swap", "Auto-switched account", ev.human())
+                    rumps.notification("agent-swap", "Auto-switched account", ev.human())
                     self.refresh_async()  # reflect the switch promptly
                 elif ev.kind == "account-quarantined":
-                    rumps.notification("claude-swap", "Account quarantined", ev.human())
+                    rumps.notification("agent-swap", "Account quarantined", ev.human())
                 elif ev.kind == "all-exhausted":
-                    rumps.notification("claude-swap", "All accounts exhausted", ev.human())
+                    rumps.notification("agent-swap", "All accounts exhausted", ev.human())
                 elif ev.kind == "config-warning":
                     # e.g. an autoswitch.model name no account reports — the
                     # engine emits it once per run; dropping it would leave a
                     # menu-bar user with a silently inert filter.
-                    rumps.notification("claude-swap", "Configuration warning", ev.human())
+                    rumps.notification("agent-swap", "Configuration warning", ev.human())
 
         def _threshold(self) -> int:
             """Current auto-switch threshold from core settings (for the menu)."""
@@ -867,60 +887,104 @@ def run(switcher) -> int:
                             _purge(_sub)
                 _purge(self.menu._menu)
             self.menu.clear()
-            account_items = []
+            items = [rumps.MenuItem(
+                "Claude", callback=lambda _s: open_url(AGENT_USAGE_URLS["claude"]),
+                icon=agent_icon_path("claude"), dimensions=[16, 16], template=False,
+            )]
             for num, email, is_active, display, _last_good, alias, disabled, fetched_at in self.snapshot["accounts"]:
                 item = rumps.MenuItem(
-                    format_account_label(
+                    "    " + format_account_label(
                         num, email, display, alias=alias, disabled=disabled, fetched_at=fetched_at
                     ),
                     callback=self._make_switch_to(num),
-                    icon=agent_icon_path("claude"), dimensions=[16, 16], template=False,
                 )
                 item.state = 1 if is_active else 0
-                account_items.append(item)
-            if not account_items:
-                account_items.append(rumps.MenuItem("No managed accounts", callback=None))
-            # Other agents (read only — never switched): Codex 5h/weekly/credits, Muse allowance.
-            other_lines = getattr(self, "_other_agent_lines", None) or []
-            if other_lines:
-                account_items.append(None)
-                for line in other_lines:
-                    agent = agent_of_line(line)
-                    url = AGENT_USAGE_URLS.get(agent or "")
-                    account_items.append(rumps.MenuItem(
-                        line,
-                        # A callback keeps the row enabled (macOS greys out items without one).
-                        callback=(lambda _sender, u=url: subprocess.Popen(["/usr/bin/open", u])) if url else None,
-                        icon=agent_icon_path(agent) if agent else None, dimensions=[16, 16], template=False,
-                    ))
+                items.append(item)
+            if len(items) == 1:
+                items.append(rumps.MenuItem("    No Claude accounts — Add account ▸ Claude",
+                                            callback=self.on_add_login))
+            # Other agents are read only (never switched); each row opens a submenu.
+            for agent in self._shown_agents():
+                items.append(self._agent_menu(rumps, agent, self._other_agents[agent]))
 
             self.menu = [
-                *account_items,
+                *items,
                 None,
-                rumps.MenuItem("Rotate to next", callback=self._switch(None)),
-                rumps.MenuItem("Switch to best", callback=self._switch("best")),
-                rumps.MenuItem("Next available", callback=self._switch("next-available")),
-                None,
+                self._switch_menu(rumps),
                 self._add_menu(rumps),
-                self._disable_menu(rumps),
-                self._remove_menu(rumps),
-                rumps.MenuItem("Refresh current credentials", callback=self.on_refresh_creds),
-                self._history_menu(rumps),
+                self._manage_menu(rumps),
                 None,
                 self._settings_menu(rumps),
                 rumps.MenuItem("Refresh now", callback=self.on_refresh_now),
-                rumps.MenuItem("Quit", callback=self.on_quit),
+                rumps.MenuItem("Quit agent-swap", callback=self.on_quit),
             ]
+
+        def _shown_agents(self) -> list[str]:
+            readings = getattr(self, "_other_agents", None) or {}
+            shown = {"codex": self.settings.show_codex, "muse": self.settings.show_muse}
+            return [a for a in readings if shown.get(a, True)]
+
+        def _agent_menu(self, rumps, agent, reading):
+            from claude_swap.agent_usage import AGENT_LABELS, agent_menu_rows
+            headline, details = agent_menu_rows(agent, reading)
+            label = AGENT_LABELS.get(agent, agent)
+            url = AGENT_USAGE_URLS.get(agent)
+            menu = rumps.MenuItem(f"{label} · {headline}", icon=agent_icon_path(agent),
+                                  dimensions=[16, 16], template=False)
+            open_usage = (lambda _s, u=url: open_url(u)) if url else None
+            for line in details:
+                # A callback keeps the row readable (macOS greys out items without one).
+                menu.add(rumps.MenuItem(line, callback=open_usage))
+            if details:
+                menu.add(None)
+            if url:
+                menu.add(rumps.MenuItem("Open usage page", callback=open_usage))
+            if agent in AGENT_LOGIN_COMMANDS:
+                menu.add(rumps.MenuItem(
+                    "Sign in / change account (Terminal)…",
+                    callback=lambda _s, c=AGENT_LOGIN_COMMANDS[agent]: open_in_terminal(c)))
+            if agent in AGENT_STATUS_COMMANDS:
+                title, command = AGENT_STATUS_COMMANDS[agent]
+                menu.add(rumps.MenuItem(f"{title} (Terminal)",
+                                        callback=lambda _s, c=command: open_in_terminal(c)))
+            menu.add(rumps.MenuItem(f"Hide {label} from menu",
+                                    callback=self._make_toggle_agent(agent)))
+            return menu
+
+        def _switch_menu(self, rumps):
+            menu = rumps.MenuItem("Switch Claude account")
+            menu.add(rumps.MenuItem("Rotate to next", callback=self._switch(None)))
+            menu.add(rumps.MenuItem("Switch to best", callback=self._switch("best")))
+            menu.add(rumps.MenuItem("Next available", callback=self._switch("next-available")))
+            return menu
+
+        def _manage_menu(self, rumps):
+            menu = rumps.MenuItem("Manage Claude accounts")
+            menu.add(self._disable_menu(rumps))
+            menu.add(self._remove_menu(rumps))
+            menu.add(rumps.MenuItem("Refresh current credentials", callback=self.on_refresh_creds))
+            menu.add(self._history_menu(rumps))
+            return menu
 
         def _add_menu(self, rumps):
             menu = rumps.MenuItem("Add account")
-            menu.add(rumps.MenuItem("From current login", callback=self.on_add_login))
+            claude_icon = dict(icon=agent_icon_path("claude"), dimensions=[16, 16], template=False)
+            menu.add(rumps.MenuItem("Claude — from current login", callback=self.on_add_login,
+                                    **claude_icon))
             if hasattr(self.switcher, "add_account_from_token"):
-                menu.add(rumps.MenuItem("From setup-token…", callback=self.on_add_token))
+                menu.add(rumps.MenuItem("Claude — from setup-token…", callback=self.on_add_token,
+                                        **claude_icon))
+            menu.add(None)
+            for agent, command in AGENT_LOGIN_COMMANDS.items():
+                label = {"codex": "Codex", "muse": "Muse"}[agent]
+                menu.add(rumps.MenuItem(
+                    f"{label} — sign in (Terminal, replaces current login)…",
+                    callback=lambda _s, c=command: open_in_terminal(c),
+                    icon=agent_icon_path(agent), dimensions=[16, 16], template=False))
             return menu
 
         def _remove_menu(self, rumps):
-            menu = rumps.MenuItem("Remove account")
+            menu = rumps.MenuItem("Remove")
             accounts = self.snapshot["accounts"]
             if not accounts:
                 menu.add(rumps.MenuItem("No managed accounts", callback=None))
@@ -930,7 +994,7 @@ def run(switcher) -> int:
             return menu
 
         def _disable_menu(self, rumps):
-            menu = rumps.MenuItem("Disable / enable account")
+            menu = rumps.MenuItem("Disable / enable")
             accounts = self.snapshot["accounts"]
             if not accounts:
                 menu.add(rumps.MenuItem("No managed accounts", callback=None))
@@ -963,24 +1027,33 @@ def run(switcher) -> int:
 
         def _settings_menu(self, rumps):
             menu = rumps.MenuItem("Settings")
-            name_item = rumps.MenuItem("Show account name in menu bar", callback=self.on_toggle_name)
-            name_item.state = 1 if self.settings.show_account_name else 0
-            menu.add(name_item)
 
-            title_pct = rumps.MenuItem("Title percentage")
-            tp_labels = {"off": "None", "5h": "Session (5h)",
-                         "7d": "Weekly (7d)", "both": "Both (5h · 7d)"}
+            title = rumps.MenuItem("Menu bar title")
+            name_item = rumps.MenuItem("Show Claude account name", callback=self.on_toggle_name)
+            name_item.state = 1 if self.settings.show_account_name else 0
+            title.add(name_item)
+            tp_labels = {"off": "No usage %", "5h": "Session (5h) %",
+                         "7d": "Weekly (7d) %", "both": "Both (5h · 7d) %"}
+            title.add(None)
             for mode in TITLE_PCT_CHOICES:
                 ch = rumps.MenuItem(tp_labels[mode], callback=self._make_title_pct(mode))
                 ch.state = 1 if self.settings.title_pct == mode else 0
-                title_pct.add(ch)
-            menu.add(title_pct)
-
+                title.add(ch)
+            title.add(None)
             scoped_item = rumps.MenuItem(
-                "Show model limits in title", callback=self.on_toggle_scoped
+                "Show per-model limits", callback=self.on_toggle_scoped
             )
             scoped_item.state = 1 if self.settings.title_scoped else 0
-            menu.add(scoped_item)
+            title.add(scoped_item)
+            menu.add(title)
+
+            agents = rumps.MenuItem("Agents in menu")
+            for agent, label in (("codex", "Codex"), ("muse", "Muse")):
+                ch = rumps.MenuItem(label, callback=self._make_toggle_agent(agent),
+                                    icon=agent_icon_path(agent), dimensions=[16, 16], template=False)
+                ch.state = 1 if getattr(self.settings, f"show_{agent}") else 0
+                agents.add(ch)
+            menu.add(agents)
 
             interval = rumps.MenuItem("Refresh interval")
             labels = {30: "30 seconds", 60: "60 seconds", 300: "5 minutes"}
@@ -990,17 +1063,17 @@ def run(switcher) -> int:
                 interval.add(choice)
             menu.add(interval)
 
-            auto_item = rumps.MenuItem("Auto-switch accounts", callback=self.on_toggle_autoswitch)
+            auto = rumps.MenuItem("Claude auto-switch")
+            auto_item = rumps.MenuItem("Enabled", callback=self.on_toggle_autoswitch)
             auto_item.state = 1 if self.settings.auto_switch_enabled else 0
-            menu.add(auto_item)
-
-            threshold_menu = rumps.MenuItem("Auto-switch threshold")
+            auto.add(auto_item)
+            auto.add(None)
             current = self._threshold()
             for pct in AUTO_THRESHOLD_CHOICES:
-                ch = rumps.MenuItem(f"{pct}%", callback=self._make_threshold(pct))
+                ch = rumps.MenuItem(f"Switch at {pct}%", callback=self._make_threshold(pct))
                 ch.state = 1 if current == pct else 0
-                threshold_menu.add(ch)
-            menu.add(threshold_menu)
+                auto.add(ch)
+            menu.add(auto)
 
             return menu
 
@@ -1015,13 +1088,13 @@ def run(switcher) -> int:
                 fn()
                 return True
             except ClaudeSwitchError as e:
-                rumps.alert(title="claude-swap", message=str(e))
+                rumps.alert(title="agent-swap", message=str(e))
                 return False
 
         def _notify_switched(self):
             rumps.notification(
-                "claude-swap",
-                "Account switched",
+                "agent-swap",
+                "Claude account switched",
                 "Switch takes effect within ~30s — restart Claude Code to apply immediately.",
             )
 
@@ -1100,7 +1173,7 @@ def run(switcher) -> int:
 
         def on_refresh_creds(self, _sender):
             if self.switcher._get_current_account() is None:
-                rumps.alert(title="claude-swap",
+                rumps.alert(title="agent-swap",
                             message="No active Claude Code login detected. Log in first.")
                 return
             try:
@@ -1110,14 +1183,14 @@ def run(switcher) -> int:
                 # credential lives in the macOS Keychain, which a background agent
                 # can't read (the security call times out). Point at the fix.
                 rumps.alert(
-                    title="claude-swap",
+                    title="agent-swap",
                     message="Couldn't read the active credential. If the menu bar is running "
                             "as a background/login agent, macOS blocks its Keychain access — "
                             "quit and relaunch it from a Terminal with: cswap --menubar",
                 )
                 return
             except ClaudeSwitchError as e:
-                rumps.alert(title="claude-swap", message=str(e))
+                rumps.alert(title="agent-swap", message=str(e))
                 return
             self.refresh_async()
 
@@ -1127,6 +1200,13 @@ def run(switcher) -> int:
         def on_quit(self, _sender):
             self._stop_engine()
             rumps.quit_application()
+
+        def _make_toggle_agent(self, agent):
+            def cb(_sender):
+                key = f"show_{agent}"
+                setattr(self.settings, key, not getattr(self.settings, key))
+                self._save_and_rebuild()
+            return cb
 
         def on_toggle_name(self, _sender):
             self.settings.show_account_name = not self.settings.show_account_name
@@ -1168,7 +1248,7 @@ def run(switcher) -> int:
                 try:
                     set_setting(self.switcher.backup_dir, "autoswitch.threshold", str(pct))
                 except Exception as e:
-                    rumps.alert(title="claude-swap", message=f"Couldn't set threshold: {e}")
+                    rumps.alert(title="agent-swap", message=f"Couldn't set threshold: {e}")
                     return
                 self._restart_engine()  # apply immediately if running
                 self.rebuild_menu()

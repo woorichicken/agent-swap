@@ -66,14 +66,14 @@ def test_codex_handshake_and_complete_reading(executable):
     result = agent_usage.read_codex_usage()
     assert result == {"status": "ok", **LIMITS}
     assert agent_usage.format_other_agents({"codex": result}) == [
-        "ChatGPT Codex · 5h 0% · 주간 67.5% · 크레딧 12",
+        "Codex · 5h 0% · weekly 67.5% · Credits 12",
     ]
 
 
 def test_missing_codex_is_unavailable_and_missing_muse_is_omitted():
     result = read_other_agents()
-    assert result == {"codex": {"status": "unavailable", "reason": "실행 파일 없음"}}
-    assert "못 읽음(실행 파일 없음)" in agent_usage.format_other_agents(result)[0]
+    assert result == {"codex": {"status": "unavailable", "reason": "not installed"}}
+    assert "unavailable (not installed)" in agent_usage.format_other_agents(result)[0]
     assert "0%" not in agent_usage.format_other_agents(result)[0]
 
 
@@ -112,10 +112,10 @@ def test_muse_terminal_control_characters_are_removed():
 
 @pytest.mark.parametrize("script,reason", [
     ("print('not json', flush=True)", "JSONDecodeError"),
-    ("print('[]', flush=True)", "응답 형식 오류"),
-    ("print('{\"id\":1,\"error\":{\"code\":-1}}', flush=True)", "JSON-RPC 오류"),
-    ("print('{\"id\":1,\"result\":null}', flush=True)", "initialize 응답"),
-    ("pass", "응답 없이"),
+    ("print('[]', flush=True)", "malformed JSON-RPC response"),
+    ("print('{\"id\":1,\"error\":{\"code\":-1}}', flush=True)", "JSON-RPC error"),
+    ("print('{\"id\":1,\"result\":null}', flush=True)", "malformed initialize response"),
+    ("pass", "exited without a response"),
     ("import sys; sys.stdout.buffer.write(b'\\xff\\n')", "UnicodeDecodeError"),
 ])
 def test_codex_malformed_or_failed_response(executable, script, reason):
@@ -145,8 +145,8 @@ def test_codex_partial_limit_and_unknown_credits(executable):
     assert result["primary"] is None
     assert result["credits"] == {"balance": None, "hasCredits": None}
     line = agent_usage.format_other_agents({"codex": result})[0]
-    assert "5h 미제공" in line
-    assert "크레딧 미제공" in line
+    assert "5h n/a" in line
+    assert "Credits n/a" in line
 
 
 def test_codex_stderr_cannot_block_protocol(executable):
@@ -158,7 +158,7 @@ def test_codex_partial_line_times_out(executable):
     executable("codex", "import sys, time; sys.stdout.write('{'); sys.stdout.flush(); time.sleep(60)")
     started = time.monotonic()
     assert agent_usage.read_codex_usage(timeout=0.2) == {
-        "status": "unavailable", "reason": "시간 초과",
+        "status": "unavailable", "reason": "timed out",
     }
     assert time.monotonic() - started < 3
 
@@ -166,15 +166,15 @@ def test_codex_partial_line_times_out(executable):
 def test_codex_oversized_response(executable, monkeypatch):
     monkeypatch.setattr(agent_usage, "MAX_RESPONSE_BYTES", 100)
     executable("codex", "print('x' * 101, flush=True)")
-    assert agent_usage.read_codex_usage()["reason"] == "응답 크기 초과"
+    assert agent_usage.read_codex_usage()["reason"] == "response too large"
 
 
 @pytest.mark.parametrize("allowance,reason,expected", [
-    (None, "no_allowance", "Muse · 구독 한도 없음 (no_allowance)"),
+    (None, "no_allowance", "Muse · no plan allowance (no_allowance)"),
     ({"used": 12, "limit": 100}, None, "Muse · used:12 · limit:100"),
     ({"nested": {"remaining": 0}, "name": "구독"}, None,
      'Muse · nested:{"remaining": 0} · name:"구독"'),
-    ({}, None, "Muse · 구독 한도 정보 없음"),
+    ({}, None, "Muse · allowance details empty"),
 ])
 def test_muse_allowance(executable, allowance, reason, expected):
     response = {"schemaVersion": 1, "allowance": allowance, "reason": reason}
@@ -196,7 +196,7 @@ def test_muse_invalid_json_or_shape(executable, response):
 
 def test_muse_failed_command(executable):
     executable("muse", "raise SystemExit(7)")
-    assert agent_usage.read_muse_usage() == {"status": "unavailable", "reason": "종료 코드 7"}
+    assert agent_usage.read_muse_usage() == {"status": "unavailable", "reason": "exit code 7"}
 
 
 @pytest.mark.parametrize("agent", ["codex", "muse"])
@@ -220,7 +220,7 @@ def test_process_group_cleanup(executable, tmp_path, agent, succeeds):
     result = reader(timeout=5)
     assert result["status"] == ("ok" if succeeds else "unavailable"), result
     if not succeeds:
-        assert result["reason"] == "시간 초과"
+        assert result["reason"] == "timed out"
     child_pid = int(pid_file.read_text())
     # Some CI init processes briefly retain killed children as zombies.
     deadline = time.monotonic() + 2
@@ -266,8 +266,8 @@ def test_list_appends_other_agents(executable, monkeypatch, temp_home, capsys, j
         assert result is None
         assert output.endswith(
             "Other agents:\n"
-            "  ChatGPT Codex · 5h 0% · 주간 67.5% · 크레딧 12\n"
-            "  Muse · 구독 한도 없음 (no_allowance)\n"
+            "  Codex · 5h 0% · weekly 67.5% · Credits 12\n"
+            "  Muse · no plan allowance (no_allowance)\n"
         )
 
 
@@ -301,7 +301,7 @@ def test_muse_local_usage_sums_today_and_prices_from_catalog(tmp_path, monkeypat
     log.parent.mkdir(parents=True)
     events = [
         {"payload": {"event": {"model": "muse-spark-1.3-contributor", "usage": {"input_tokens": 1_000_000, "cache_read_tokens": 400_000, "output_tokens": 100_000}}}},
-        {"payload": {"event": {"model": None, "usage": {"input_tokens": 2_000, "output_tokens": 10}}}},  # 같은 세션 모델로 셈
+        {"payload": {"event": {"model": None, "usage": {"input_tokens": 2_000, "output_tokens": 10}}}},  # counted with the same session's model
         {"payload": {"other": "no usage"}},
     ]
     log.write_text("\n".join(json.dumps(e) for e in events) + "\nnot json\n", encoding="utf-8")
@@ -310,10 +310,27 @@ def test_muse_local_usage_sums_today_and_prices_from_catalog(tmp_path, monkeypat
     expected = (600_000 * 0.10 + 400_000 * 0.002 + 100_000 * 0.20 + 2_000 * 0.10 + 10 * 0.20) / 1e6
     assert abs(t["cost"] - expected) < 1e-9 and t["priced"] is True
     line = agent_usage.format_other_agents({"muse": {"status": "ok", "allowance": None, "reason": "no_allowance", "today": t}})[0]
-    assert line.startswith("Muse · 오늘 요청 2 · 입력 1.0M(캐시 400K) · 출력 100K · 추정 $0.08")
+    assert line.startswith("Muse · today 2 req · ~$0.08 · Input 1.0M (cached 400K) · output 100K")
 
 
 def test_muse_local_usage_none_without_todays_folder(tmp_path, monkeypatch):
     from datetime import date
     _muse_home(tmp_path, monkeypatch)
     assert agent_usage.read_muse_local_usage(date(2026, 11, 4)) is None
+
+
+def test_agent_menu_rows_split_headline_and_details():
+    codex = {"status": "ok", "primary": {"usedPercent": 1, "resetsAt": None},
+             "secondary": {"usedPercent": 35, "resetsAt": None},
+             "credits": {"balance": "60217.6", "hasCredits": True}, "planType": "plus"}
+    assert agent_usage.agent_menu_rows("codex", codex) == (
+        "5h 1% · weekly 35%", ["Credits 60,218", "Plan plus"])
+    muse = {"status": "ok", "allowance": None, "reason": "no_allowance",
+            "today": {"requests": 3, "input": 2_000_000, "cached": 1_500_000,
+                      "output": 4_000, "cost": 0.123, "priced": True}}
+    headline, details = agent_usage.agent_menu_rows("muse", muse)
+    assert headline == "today 3 req · ~$0.12"
+    assert details[0] == "Input 2.0M (cached 1.5M) · output 4K"
+    assert details[-1] == "No plan allowance (no_allowance)"
+    assert agent_usage.agent_menu_rows("muse", {"status": "unavailable", "reason": "timed out"}) == (
+        "unavailable (timed out)", [])

@@ -661,9 +661,29 @@ def test_agent_icon_from_installed_app_and_missing_app(tmp_path, monkeypatch):
 
 def test_agent_of_line_and_usage_urls():
     assert menubar.agent_of_line("ChatGPT Codex · 5h 0%") == "codex"
-    assert menubar.agent_of_line("Muse · 오늘 요청 1") == "muse"
+    assert menubar.agent_of_line("Muse · today 1 req") == "muse"
+    assert menubar.agent_of_line("Codex · 5h 0%") == "codex"
     assert menubar.agent_of_line("Other") is None
-    assert set(menubar.AGENT_USAGE_URLS) == {"codex", "muse"}
+    assert set(menubar.AGENT_USAGE_URLS) == {"claude", "codex", "muse"}
+
+
+def test_agent_login_commands_open_in_terminal(monkeypatch):
+    calls = []
+    monkeypatch.setattr(menubar.subprocess, "Popen", lambda cmd, **_k: calls.append(cmd))
+    assert set(menubar.AGENT_LOGIN_COMMANDS) == {"codex", "muse"}
+    menubar.open_in_terminal(menubar.AGENT_LOGIN_COMMANDS["codex"])
+    assert calls[0][0] == "/usr/bin/osascript"
+    assert 'do script "codex login"' in calls[0][2]
+
+
+def test_settings_agent_visibility_round_trip(tmp_path: Path):
+    path = tmp_path / "settings.json"
+    s = menubar.MenuBarSettings.load(path)
+    assert s.show_codex is True and s.show_muse is True
+    s.show_muse = False
+    s.save(path)
+    loaded = menubar.MenuBarSettings.load(path)
+    assert loaded.show_codex is True and loaded.show_muse is False
 
 
 def test_agent_icon_downloads_once_when_no_app(tmp_path, monkeypatch):

@@ -1,9 +1,20 @@
 # agent-swap
 
-## claude-swap 포크 · 무엇이 다른가
+## What's different from claude-swap
 
-[claude-swap](https://github.com/realiti4/claude-swap)의 MIT 포크입니다. 기존 Claude 계정·데이터와 `cswap` 명령을 유지하면서 `aswap`·`agent-swap` 명령과 Codex·Muse 사용량 읽기를 추가했습니다. Codex·Muse 계정은 전환하지 않습니다.
-An MIT fork of claude-swap: preserves Claude accounts, data, and commands; adds `aswap` / `agent-swap` and read-only Codex / Muse usage.
+An MIT fork of [claude-swap](https://github.com/realiti4/claude-swap). It keeps your
+existing Claude accounts, data, and the `cswap` command, and adds:
+
+- `aswap` / `agent-swap` commands.
+- Read-only Codex and Muse usage in `aswap list` and the menu bar (Codex 5h /
+  weekly / credits; Muse today's requests, tokens, and estimated cost from local
+  session logs).
+- A menu bar grouped by agent: Claude accounts, then one row per agent with a
+  submenu (usage page, sign in / change account in Terminal, status). "Add
+  account" covers Claude, Codex, and Muse; Settings → Agents in menu hides rows.
+
+Codex and Muse keep one login each — agent-swap reads their usage but never
+switches their accounts.
 
 Multi-account switcher for Claude Code. Easily switch between multiple Claude accounts without logging out, or let it switch for you before you hit a rate limit. Track usage for every account in a live dashboard, and run accounts in parallel. Works with both the Claude Code CLI and the VS Code extension.
 
@@ -89,8 +100,8 @@ cswap list
 ```
 
 The list ends with **Other agents:**, showing the signed-in Codex account's
-5-hour / weekly usage and credits, plus Muse's subscription allowance. A failed
-query displays `못 읽음(이유)` rather than 0%; Muse is omitted when not installed.
+5-hour / weekly usage and credits, plus Muse's subscription allowance and today's local usage. A failed
+query displays `unavailable (reason)` rather than 0%; Muse is omitted when not installed.
 Each query times out after 10 seconds and cleans up its child process group.
 These queries only read usage; they never switch Codex or Muse accounts.
 
