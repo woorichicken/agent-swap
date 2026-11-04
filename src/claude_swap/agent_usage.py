@@ -205,6 +205,14 @@ def _single_line(value: object) -> str:
     return "".join(c if c.isprintable() else " " for c in str(value))
 
 
+def _credits_text(balance: object) -> str:
+    """Round a credit balance for display (``60217.6045`` -> ``60,218``); keep odd values as-is."""
+    try:
+        return f"{round(float(balance)):,}"
+    except (TypeError, ValueError):
+        return _single_line(balance)
+
+
 def format_other_agents(agents: dict) -> list[str]:
     lines = []
     for name, reading in agents.items():
@@ -220,7 +228,7 @@ def format_other_agents(agents: dict) -> list[str]:
             balance = credits["balance"]
             if balance is None:
                 balance = "없음" if credits["hasCredits"] is False else "미제공"
-            summary = f"5h {percent('primary')} · 주간 {percent('secondary')} · 크레딧 {_single_line(balance)}"
+            summary = f"5h {percent('primary')} · 주간 {percent('secondary')} · 크레딧 {_credits_text(balance)}"
         elif reading["allowance"] is None:
             summary = f"구독 한도 없음 ({_single_line(reading.get('reason') or 'unknown')})"
         else:

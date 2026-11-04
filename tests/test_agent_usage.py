@@ -66,7 +66,7 @@ def test_codex_handshake_and_complete_reading(executable):
     result = agent_usage.read_codex_usage()
     assert result == {"status": "ok", **LIMITS}
     assert agent_usage.format_other_agents({"codex": result}) == [
-        "ChatGPT Codex · 5h 0% · 주간 67.5% · 크레딧 12.50",
+        "ChatGPT Codex · 5h 0% · 주간 67.5% · 크레딧 12",
     ]
 
 
@@ -266,7 +266,7 @@ def test_list_appends_other_agents(executable, monkeypatch, temp_home, capsys, j
         assert result is None
         assert output.endswith(
             "Other agents:\n"
-            "  ChatGPT Codex · 5h 0% · 주간 67.5% · 크레딧 12.50\n"
+            "  ChatGPT Codex · 5h 0% · 주간 67.5% · 크레딧 12\n"
             "  Muse · 구독 한도 없음 (no_allowance)\n"
         )
 
