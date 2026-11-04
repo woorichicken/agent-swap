@@ -41,6 +41,10 @@ SWITCH_HISTORY_LIMIT = 10
 NOTIFICATION_BUNDLE_ID = "com.claude-swap.menubar"
 
 
+
+# Codex/Muse usage refresh cadence for the menu bar (seconds).
+OTHER_AGENTS_INTERVAL = 300
+
 def ensure_notification_identity(
     executable: Path | None = None,
     *,
@@ -632,12 +636,29 @@ def run(switcher) -> int:
                     self.switcher._logger.debug("menubar snapshot failed", exc_info=True)
                     return
                 snap = _adapt_snapshot(raw)
+                self._refresh_other_agents(full)
                 self._log_usage(snap)
                 self.snapshot = snap
                 self._snapshot_at = time.time()
                 self._dirty = True  # picked up by on_sync_tick on the main thread
             finally:
                 self._refreshing = False
+
+        def _refresh_other_agents(self, full):
+            """Read Codex/Muse usage at most every OTHER_AGENTS_INTERVAL seconds.
+
+            `codex app-server` takes about a second to start, so it is not run on
+            every refresh tick. Failures keep the last lines rather than blanking.
+            """
+            now = time.time()
+            if not full and now - getattr(self, "_other_agents_at", 0) < OTHER_AGENTS_INTERVAL:
+                return
+            try:
+                from claude_swap.agent_usage import format_other_agents, read_other_agents
+                self._other_agent_lines = format_other_agents(read_other_agents())
+                self._other_agents_at = now
+            except Exception:
+                self.switcher._logger.debug("menubar other-agents read failed", exc_info=True)
 
         def _log_usage(self, snap):
             """Log each account's session/weekly limits when they change.
@@ -793,6 +814,11 @@ def run(switcher) -> int:
                 account_items.append(item)
             if not account_items:
                 account_items.append(rumps.MenuItem("No managed accounts", callback=None))
+            # Other agents (read only — never switched): Codex 5h/weekly/credits, Muse allowance.
+            other_lines = getattr(self, "_other_agent_lines", None) or []
+            if other_lines:
+                account_items.append(None)
+                account_items.extend(rumps.MenuItem(line, callback=None) for line in other_lines)
 
             self.menu = [
                 *account_items,
