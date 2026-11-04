@@ -912,3 +912,10 @@ def pytest_configure():
     # unraisable-exception sweep included; the controller and -n 0 never freeze.
     if os.environ.get("PYTEST_XDIST_WORKER"):
         atexit.register(gc.freeze)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_muse_home(tmp_path, monkeypatch):
+    """Muse 오늘 사용량은 로컬 세션 기록을 읽는다 — 시험은 개발자의 실제 ~/.local/share/muse 를 보지 않는다."""
+    if "ASWAP_MUSE_HOME" not in os.environ:
+        monkeypatch.setenv("ASWAP_MUSE_HOME", str(tmp_path / "muse-isolated"))

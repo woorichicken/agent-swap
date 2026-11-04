@@ -184,7 +184,7 @@ def test_muse_allowance(executable, allowance, reason, expected):
         print({json.dumps(response)!r})
     """)
     result = agent_usage.read_muse_usage()
-    assert result == {"status": "ok", "allowance": allowance, "reason": reason}
+    assert result == {"status": "ok", "allowance": allowance, "reason": reason, "today": None}
     assert agent_usage.format_other_agents({"muse": result}) == [expected]
 
 
@@ -280,3 +280,40 @@ def test_cli_json_has_other_agents(executable, monkeypatch, temp_home, capsys, c
     result = json.loads(capsys.readouterr().out)
     assert result["accounts"] == []
     assert result["otherAgents"] == {"codex": {"status": "ok", **LIMITS}}
+
+
+def _muse_home(tmp_path, monkeypatch):
+    home = tmp_path / "muse"
+    (home / "model-catalog").mkdir(parents=True)
+    (home / "model-catalog" / "c.json").write_text(json.dumps({"rows": [
+        {"model_id": "muse-spark-1.3-contributor", "cost": {"input": "0.10", "output": "0.20", "cached": "0.002", "currency": "USD"}},
+        {"model_id": "muse-image-1.0", "cost": None},
+    ]}), encoding="utf-8")
+    monkeypatch.setenv("ASWAP_MUSE_HOME", str(home))
+    return home
+
+
+def test_muse_local_usage_sums_today_and_prices_from_catalog(tmp_path, monkeypatch):
+    from datetime import date
+    home = _muse_home(tmp_path, monkeypatch)
+    day = date(2026, 11, 4)
+    log = home / "sessions" / "2026" / "11" / "04" / "s1" / "session.jsonl"
+    log.parent.mkdir(parents=True)
+    events = [
+        {"payload": {"event": {"model": "muse-spark-1.3-contributor", "usage": {"input_tokens": 1_000_000, "cache_read_tokens": 400_000, "output_tokens": 100_000}}}},
+        {"payload": {"event": {"model": None, "usage": {"input_tokens": 2_000, "output_tokens": 10}}}},  # 같은 세션 모델로 셈
+        {"payload": {"other": "no usage"}},
+    ]
+    log.write_text("\n".join(json.dumps(e) for e in events) + "\nnot json\n", encoding="utf-8")
+    t = agent_usage.read_muse_local_usage(day)
+    assert t["requests"] == 2 and t["input"] == 1_002_000 and t["cached"] == 400_000 and t["output"] == 100_010
+    expected = (600_000 * 0.10 + 400_000 * 0.002 + 100_000 * 0.20 + 2_000 * 0.10 + 10 * 0.20) / 1e6
+    assert abs(t["cost"] - expected) < 1e-9 and t["priced"] is True
+    line = agent_usage.format_other_agents({"muse": {"status": "ok", "allowance": None, "reason": "no_allowance", "today": t}})[0]
+    assert line.startswith("Muse · 오늘 요청 2 · 입력 1.0M(캐시 400K) · 출력 100K · 추정 $0.08")
+
+
+def test_muse_local_usage_none_without_todays_folder(tmp_path, monkeypatch):
+    from datetime import date
+    _muse_home(tmp_path, monkeypatch)
+    assert agent_usage.read_muse_local_usage(date(2026, 11, 4)) is None
