@@ -663,6 +663,14 @@ class CredentialStore:
             # which is what makes it self-heal without being erasable.
             self._active_read_failed = keychain_failed
             if val:
+                # In API-key mode Claude Code still keeps MCP logins (mcpOAuth) in
+                # this item, with no claudeAiOauth section. That residue is not the
+                # live login — the managed key is. Reading the residue here made a
+                # switch away from an API-key slot back it up over the key.
+                if not _has_claude_ai_oauth(val):
+                    key = self._read_managed_key()
+                    if key:
+                        return ActiveCredentials(key, False, keychain_failed)
                 return ActiveCredentials(val, False)
         elif self._residual_verdict is False or (
             self._active_read_failed or self._keychain_unreadable
@@ -1966,3 +1974,16 @@ class CredentialStore:
                 f"Failed to remove unclaimed credential {entry_id}: {e}"
             )
         self._mutate_stash_manifest(lambda entries: entries.pop(entry_id, None))
+
+
+def _has_claude_ai_oauth(blob: str) -> bool:
+    """True when a credential blob carries a claude.ai OAuth section.
+
+    Non-JSON blobs (raw tokens) are treated as OAuth-bearing so behaviour for
+    them is unchanged.
+    """
+    try:
+        data = json.loads(blob)
+    except (ValueError, TypeError):
+        return True
+    return not isinstance(data, dict) or "claudeAiOauth" in data
