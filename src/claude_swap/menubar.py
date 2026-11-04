@@ -48,6 +48,9 @@ NOTIFICATION_BUNDLE_ID = "com.claude-swap.menubar"
 # Claude accounts -> Claude.app, Codex -> ChatGPT.app. Missing app = no icon.
 AGENT_ICON_APPS = {"claude": "/Applications/Claude.app", "codex": "/Applications/ChatGPT.app"}
 # Clicking an agent line opens where that agent's usage/billing is shown.
+# Agents without a desktop app here: the maker's site icon, fetched once into the cache
+# (dev.meta.ai allows it in robots.txt — checked 2026-11-04).
+AGENT_ICON_URLS = {"muse": "https://dev.meta.ai/favicon.ico"}
 AGENT_USAGE_URLS = {
     "codex": "https://chatgpt.com/codex/settings/usage",
     "muse": "https://dev.meta.ai/",
@@ -56,13 +59,13 @@ AGENT_USAGE_URLS = {
 
 def agent_icon_path(name: str, cache_dir: Path | None = None) -> str | None:
     """PNG of an installed app's icon for menu items, cached; None when unavailable."""
-    app = AGENT_ICON_APPS.get(name)
-    if not app or not Path(app).is_dir():
-        return None
     cache_dir = cache_dir or (paths.get_backup_root() / "cache" / "icons")
     out = cache_dir / f"{name}.png"
     if out.exists():
         return str(out)
+    app = AGENT_ICON_APPS.get(name)
+    if not app or not Path(app).is_dir():
+        return _download_icon(name, out)
     try:
         info = plistlib.loads((Path(app) / "Contents" / "Info.plist").read_bytes())
         icon = info.get("CFBundleIconFile") or "AppIcon"
@@ -72,6 +75,26 @@ def agent_icon_path(name: str, cache_dir: Path | None = None) -> str | None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         subprocess.run(["/usr/bin/sips", "-s", "format", "png", "-Z", "32", str(icns), "--out", str(out)],
                        check=True, capture_output=True, timeout=10)
+        return str(out) if out.exists() else None
+    except Exception:
+        return None
+
+
+def _download_icon(name: str, out: Path) -> str | None:
+    url = AGENT_ICON_URLS.get(name)
+    if not url:
+        return None
+    try:
+        import urllib.request
+        request = urllib.request.Request(url, headers={"User-Agent": "agent-swap"})
+        with urllib.request.urlopen(request, timeout=5) as response:
+            data = response.read(512_000)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        raw = out.with_suffix(".ico")
+        raw.write_bytes(data)
+        subprocess.run(["/usr/bin/sips", "-s", "format", "png", "-Z", "32", str(raw), "--out", str(out)],
+                       check=True, capture_output=True, timeout=10)
+        raw.unlink(missing_ok=True)
         return str(out) if out.exists() else None
     except Exception:
         return None

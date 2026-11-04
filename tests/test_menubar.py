@@ -655,6 +655,7 @@ def test_agent_icon_from_installed_app_and_missing_app(tmp_path, monkeypatch):
     assert out and out.endswith("claude.png") and calls[0][0] == "/usr/bin/sips"
     assert menubar.agent_icon_path("claude", tmp_path / "icons") == out and len(calls) == 1  # cached
     assert menubar.agent_icon_path("codex", tmp_path / "icons") is None
+    monkeypatch.setattr(menubar, "AGENT_ICON_URLS", {})
     assert menubar.agent_icon_path("muse", tmp_path / "icons") is None
 
 
@@ -663,3 +664,19 @@ def test_agent_of_line_and_usage_urls():
     assert menubar.agent_of_line("Muse · 오늘 요청 1") == "muse"
     assert menubar.agent_of_line("Other") is None
     assert set(menubar.AGENT_USAGE_URLS) == {"codex", "muse"}
+
+
+def test_agent_icon_downloads_once_when_no_app(tmp_path, monkeypatch):
+    import io, urllib.request
+    fetched = []
+
+    def fake_urlopen(req, timeout=0):
+        fetched.append(req.full_url)
+        return io.BytesIO(b"ico")
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(menubar.subprocess, "run", lambda cmd, **kw: Path(cmd[-1]).write_bytes(b"png"))
+    monkeypatch.setattr(menubar, "AGENT_ICON_APPS", {})
+    out = menubar.agent_icon_path("muse", tmp_path / "icons")
+    assert out and out.endswith("muse.png") and fetched == ["https://dev.meta.ai/favicon.ico"]
+    assert menubar.agent_icon_path("muse", tmp_path / "icons") == out and len(fetched) == 1
+    assert not (tmp_path / "icons" / "muse.ico").exists()
