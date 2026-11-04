@@ -1,4 +1,9 @@
-# claude-swap
+# agent-swap
+
+## claude-swap 포크 · 무엇이 다른가
+
+[claude-swap](https://github.com/realiti4/claude-swap)의 MIT 포크입니다. 기존 Claude 계정·데이터와 `cswap` 명령을 유지하면서 `aswap`·`agent-swap` 명령과 Codex·Muse 사용량 읽기를 추가했습니다. Codex·Muse 계정은 전환하지 않습니다.
+An MIT fork of claude-swap: preserves Claude accounts, data, and commands; adds `aswap` / `agent-swap` and read-only Codex / Muse usage.
 
 Multi-account switcher for Claude Code. Easily switch between multiple Claude accounts without logging out, or let it switch for you before you hit a rate limit. Track usage for every account in a live dashboard, and run accounts in parallel. Works with both the Claude Code CLI and the VS Code extension.
 
@@ -6,21 +11,26 @@ Multi-account switcher for Claude Code. Easily switch between multiple Claude ac
 
 ### Using uv (recommended)
 
+When replacing an existing `claude-swap` uv tool, run
+`uv tool uninstall claude-swap` first to release its `cswap` / `claude-swap`
+commands and prevent a later upstream upgrade from replacing them. This removes
+the tool installation only; existing accounts and data stay in place.
+
 ```bash
-uv tool install claude-swap
+uv tool install git+https://github.com/woorichicken/agent-swap
 ```
 
 ### Using pipx
 
 ```bash
-pipx install claude-swap
+pipx install git+https://github.com/woorichicken/agent-swap
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/realiti4/claude-swap.git
-cd claude-swap
+git clone https://github.com/woorichicken/agent-swap.git
+cd agent-swap
 uv sync
 uv run cswap help
 ```
@@ -28,11 +38,13 @@ uv run cswap help
 ### Updating
 
 ```bash
-cswap upgrade          # uv/pipx installs on macOS/Linux: auto-detects and upgrades
-# or run your installer directly:
-uv tool upgrade claude-swap
-pipx upgrade claude-swap
+aswap upgrade          # reinstalls this fork with uv; cswap upgrade is an alias
+# or run the same installer command directly:
+uv tool install --force git+https://github.com/woorichicken/agent-swap
 ```
+
+The forced reinstall uses the base package. If you use the optional menubar
+extra or custom installer options, reapply those with your install command.
 
 ## Usage
 
@@ -75,6 +87,18 @@ Not sure which one? `cswap list` is the dashboard — every account's 5-hour and
 ```bash
 cswap list
 ```
+
+The list ends with **Other agents:**, showing the signed-in Codex account's
+5-hour / weekly usage and credits, plus Muse's subscription allowance. A failed
+query displays `못 읽음(이유)` rather than 0%; Muse is omitted when not installed.
+Each query times out after 10 seconds and cleans up its child process group.
+These queries only read usage; they never switch Codex or Muse accounts.
+
+`aswap list --json` adds an `otherAgents` object keyed by `codex` and, when
+installed, `muse`. Codex includes `primary` / `secondary` (`usedPercent` and
+`resetsAt` in Unix seconds), `credits`, and `planType`; Muse includes `allowance`
+and `reason`. Both carry `status` (`ok` or `unavailable`); failures include a
+`reason`. Set `ASWAP_CODEX_BIN` or `ASWAP_MUSE_BIN` to override the executable.
 
 Or let claude-swap auto-pick by remaining quota — `cswap switch --strategy best` (most quota left) or `--strategy next-available` (skip rate-limited accounts).
 
@@ -212,7 +236,7 @@ cswap unclaimed                 # List stashed credential entries (slot + why th
 cswap unclaimed --purge ID      # Drop one (deletes its bytes; recover with /login + `cswap add`)
 cswap tui                       # Interactive dashboard (also: bare `cswap`)
 cswap watch                     # Dashboard, opened on the live watch page
-cswap upgrade                   # Upgrade claude-swap to the latest version
+cswap upgrade                   # Reinstall agent-swap from the fork repository
 cswap purge                     # Remove all claude-swap data
 ```
 
@@ -254,7 +278,7 @@ On Linux/WSL, set `XDG_DATA_HOME` to override the default location.
 Needs the `menubar` extra (macOS only):
 
 ```bash
-uv tool install 'claude-swap[menubar]'   # or: pipx install 'claude-swap[menubar]'
+uv tool install 'agent-swap[menubar] @ git+https://github.com/woorichicken/agent-swap'
 cswap menubar
 ```
 
@@ -290,7 +314,7 @@ cswap config set autoswitch.threshold 80  # validated: rejects out-of-range valu
 cswap config set autoswitch.weeklyThreshold 97  # own switch line for the 7-day/per-model windows
 cswap config set autoswitch.model Fable   # per-model switching (see "auto"); Fable,Opus for several
 cswap config set run.shareHistory true    # every cswap run shares chat history (see "run")
-cswap config set updates.check false      # no daily PyPI lookup for the "newer version" hint
+cswap config set updates.check false      # compatibility setting; this fork never checks PyPI
 cswap config set usage.headerProbe true   # opt in: setup-token usage via a 1-token request (see "add-token")
 cswap config unset autoswitch.threshold   # back to the default
 cswap config path                         # where settings.json lives
@@ -428,9 +452,9 @@ cswap purge
 Then uninstall the tool:
 
 ```bash
-uv tool uninstall claude-swap
+uv tool uninstall agent-swap
 # or
-pipx uninstall claude-swap
+pipx uninstall agent-swap
 ```
 
 ## Requirements

@@ -205,6 +205,7 @@ class TestListJson:
             "schemaVersion": SCHEMA_VERSION,
             "activeAccountNumber": None,
             "accounts": [],
+            "otherAgents": {},
         }
 
     def test_list_payload(

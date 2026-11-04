@@ -14,7 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from claude_swap import macos_keychain
+from claude_swap import agent_usage, macos_keychain
 
 from claude_swap.exceptions import (
     AccountNotFoundError,
@@ -5963,6 +5963,7 @@ class ClaudeAccountSwitcher:
         watch view's adaptive set); ``None`` — the CLI default — leaves every
         stale account eligible.
         """
+        other_agents = agent_usage.read_other_agents()
         if not self.sequence_file.exists():
             # JSON mode must never prompt — emit an empty list instead of the
             # interactive first-run setup.
@@ -5971,9 +5972,11 @@ class ClaudeAccountSwitcher:
                     "schemaVersion": SCHEMA_VERSION,
                     "activeAccountNumber": None,
                     "accounts": [],
+                    "otherAgents": other_agents,
                 }
             print(dimmed("No accounts are managed yet."))
             self._first_run_setup()
+            self._print_other_agents(other_agents)
             return None
 
         accounts_info = self._build_accounts_info()
@@ -5981,7 +5984,9 @@ class ClaudeAccountSwitcher:
         plans = self._plans_for_pass(accounts_info, fetch)
 
         if json_output:
-            return self._build_list_payload(accounts_info, entries, plans)
+            payload = self._build_list_payload(accounts_info, entries, plans)
+            payload["otherAgents"] = other_agents
+            return payload
 
         seq_data = self._get_sequence_data() or {}
         print(bolded("Accounts:"))
@@ -6049,6 +6054,16 @@ class ClaudeAccountSwitcher:
                     print(f"  {dimmed('●')} {muted(label)}   {muted(cwd)}  {dimmed(f'({", ".join(parts)})')}")
         except Exception:
             self._logger.debug("Failed to detect running instances", exc_info=True)
+
+        self._print_other_agents(other_agents)
+
+    @staticmethod
+    def _print_other_agents(agents: dict) -> None:
+        if agents:
+            print()
+            print(bolded("Other agents:"))
+            for line in agent_usage.format_other_agents(agents):
+                print(f"  {line}")
 
     def _active_account_usage(
         self, account_num: str, current_email: str, org_uuid: str

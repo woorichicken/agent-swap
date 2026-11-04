@@ -1,4 +1,4 @@
-"""Check PyPI for newer versions of claude-swap."""
+"""Fork-safe upgrades; automatic upstream update checks are disabled."""
 
 from __future__ import annotations
 
@@ -8,11 +8,10 @@ import re
 import subprocess
 import sys
 import tomllib
-import urllib.request
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from claude_swap.cache import CACHE_DIR, MISSING, read_cache, write_cache
+from claude_swap.cache import CACHE_DIR
 
 CACHE_PATH = CACHE_DIR / "update_check.json"
 CACHE_TTL = 24 * 3600  # A successful lookup is kept for a day.
@@ -180,14 +179,8 @@ def _uv_latest_version(current_version: str, cooldown: _Cooldown | None) -> str 
 
 
 def _pypi_latest_version() -> str | None:
-    """PyPI's latest release, for installs that uv does not manage."""
-    try:
-        req = urllib.request.Request(PYPI_URL)
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            data = json.loads(resp.read().decode())
-        return data["info"]["version"]
-    except Exception:
-        return None
+    """Disabled for this Git fork, including legacy fallback callers."""
+    return None
 
 
 class _Lookup(NamedTuple):
@@ -267,45 +260,12 @@ def held_back_release_notice(current_version: str) -> str | None:
 
 
 def check_for_update(current_version: str) -> str | None:
-    """Return a notification string if a newer version exists, else None."""
-    try:
-        method = _detect_install_method()
-        cached_data = read_cache(CACHE_PATH, CACHE_TTL)
-        if cached_data is None:
-            # A cached failure. Keep it for an hour, not a day.
-            cached_data = read_cache(CACHE_PATH, FAILURE_TTL)
-        if cached_data is not MISSING and isinstance(cached_data, str | None):
-            latest_version = cached_data
-        else:
-            lookup = _latest_version(current_version, method)
-            latest_version = lookup.latest
-            # A failure is cached as None and expires after FAILURE_TTL.
-            # The one exception is uv missing under a cooldown, see
-            # _latest_version.
-            if lookup.cache:
-                write_cache(CACHE_PATH, latest_version)
+    """Stay silent: upstream PyPI versions do not describe this Git fork.
 
-        if latest_version and _is_newer(latest_version, current_version):
-            direct = {
-                "uv": "uv tool upgrade claude-swap",
-                "pipx": "pipx upgrade claude-swap",
-            }.get(method or "")
-            if direct and sys.platform != "win32":
-                # cswap upgrade actually performs the upgrade here.
-                hint = "Run `cswap upgrade` to update."
-            elif direct:
-                # Windows: cswap upgrade only prints, so point at the real command.
-                hint = f"Run `{direct}` to update."
-            else:
-                # Unknown install method: cswap upgrade shows manual instructions.
-                hint = "Run `cswap upgrade` for upgrade instructions."
-            return (
-                f"A newer version of claude-swap is available ({latest_version}). "
-                f"You are using {current_version}. {hint}"
-            )
-        return None
-    except Exception:
-        return None
+    Do not consult the old cache either, since it can still contain a newer
+    upstream version and an instruction that would replace this fork.
+    """
+    return None
 
 
 def _installed_version_on_disk() -> str | None:
@@ -321,7 +281,7 @@ def _installed_version_on_disk() -> str | None:
     """
     code = (
         "import importlib.metadata as m\n"
-        "print(m.version('claude-swap'))"
+        "print(m.version('agent-swap'))"
     )
     try:
         result = subprocess.run(
@@ -337,81 +297,41 @@ def _installed_version_on_disk() -> str | None:
     return version or None
 
 
-def run_self_upgrade(current_version: str | None = None) -> int:
-    """Run the appropriate upgrade command for the current install method.
+FORK_INSTALL_URL = "git+https://github.com/woorichicken/agent-swap"
 
-    Returns the subprocess exit code, or 1 if detection failed or the package
-    manager is missing from PATH. After a successful run it verifies what
-    actually landed on disk and reports the before -> after, since a package
-    manager can exit 0 without changing anything (uv's "Nothing to upgrade",
-    #491). A uv install with a release cooldown also gets told about a release
-    the cooldown hides, since uv itself only reports "Nothing to upgrade".
-    """
-    from claude_swap.printer import accent, error, warning
+
+def run_self_upgrade(current_version: str | None = None) -> int:
+    """Reinstall this fork from Git, without offering the upstream package."""
+    from claude_swap.printer import accent, error
 
     if current_version is None:
         from claude_swap import __version__
 
         current_version = __version__
-    before = current_version
 
-    method = _detect_install_method()
-    commands = {
-        "uv": ["uv", "tool", "upgrade", "claude-swap"],
-        "pipx": ["pipx", "upgrade", "claude-swap"],
-    }
-    cmd = commands.get(method or "")
-    if cmd is None:
-        error(
-            "Could not detect install method (looked for uv tool / pipx).\n"
-            f"  sys.prefix:     {sys.prefix}\n"
-            f"  sys.executable: {sys.executable}\n"
-            "To upgrade manually, run one of:\n"
-            "  uv tool upgrade claude-swap\n"
-            "  pipx upgrade claude-swap\n"
-            f"  {sys.executable} -m pip install --upgrade claude-swap\n"
-            "If you installed with `pip install -e .`, use `git pull` instead."
-        )
-        return 1
+    cmd = ["uv", "tool", "install", "--force", FORK_INSTALL_URL]
+    command_text = " ".join(cmd)
+    # Print before starting uv, so even a failed invocation shows the exact
+    # source being installed and can be retried from a shell.
+    print(accent(command_text), flush=True)
 
-    # Windows: the running cswap.exe launcher is locked, so an in-process
-    # uv/pipx upgrade fails when it tries to replace the executable even
-    # though the package itself updates. cswap exits right after this, which
-    # releases the lock, so the user can just run the command themselves.
+    # Windows locks the running launcher until this process exits.
     if sys.platform == "win32":
-        print(f"To upgrade claude-swap on Windows, run:\n  {accent(' '.join(cmd))}")
-        if method == "uv":
-            notice = held_back_release_notice(current_version)
-            if notice:
-                warning(notice)
+        print("Run the command above after agent-swap exits.")
         return 1
 
     try:
         result = subprocess.run(cmd, check=False)
-    except FileNotFoundError:
-        error(
-            f"Detected {method} install but `{cmd[0]}` is not on PATH. "
-            "Run the upgrade manually from a shell where it is available."
-        )
+    except OSError as exc:
+        error(f"Could not run uv from PATH: {exc}. Retry the command above.")
         return 1
 
     if result.returncode != 0:
         return result.returncode
 
-    # The package manager can exit 0 without changing anything, so verify
-    # what landed on disk and say so rather than trusting its wording (#491).
-    # importlib.metadata in a fresh interpreter reads the directory uv/pipx
-    # rewrote, so the report is honest for both install methods. Verification
-    # is best effort: a failure or timeout returns None and we stay silent,
-    # never masking the upgrade's own exit status.
     after = _installed_version_on_disk()
-    if before and after and after != before:
-        print(accent(f"claude-swap upgraded: {before} -> {after}"))
-    elif before and after:
-        print(f"claude-swap is still at {after}.")
-
-    if method == "uv":
-        notice = held_back_release_notice(current_version)
-        if notice:
-            warning(notice)
+    if current_version and after and after != current_version:
+        print(accent(f"agent-swap upgraded: {current_version} -> {after}"))
+    elif current_version and after:
+        print(f"agent-swap reinstalled (version {after}; Git revision may have changed).")
     return result.returncode

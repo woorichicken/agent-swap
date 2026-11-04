@@ -529,6 +529,15 @@ def _isolate_real_home(request, tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def block_real_agent_usage(monkeypatch):
+    """Listing tests must not spawn the developer's signed-in agent CLIs.
+
+    Usage integration tests explicitly replace this stub with fake executables.
+    """
+    monkeypatch.setattr("claude_swap.agent_usage.read_other_agents", lambda: {})
+
+
+@pytest.fixture(autouse=True)
 def block_real_keychain(request, monkeypatch):
     """Safety net: no test may touch the real macOS Keychain.
 
