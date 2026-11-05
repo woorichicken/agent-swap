@@ -19,6 +19,14 @@ from claude_swap.cli import main
 from claude_swap.switcher import ClaudeAccountSwitcher
 
 
+# The fake agents below are shebang scripts and the reader relies on POSIX
+# process groups (start_new_session). Neither exists on Windows, and the
+# Codex/Muse readers are only wired into the macOS menu bar.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX-only: shebang fake agents and process groups"
+)
+
+
 LIMITS = {
     "primary": {"usedPercent": 0, "resetsAt": 1793770000},
     "secondary": {"usedPercent": 67.5, "resetsAt": 1794000000},
