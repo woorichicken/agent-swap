@@ -1,4 +1,71 @@
-# agent-swap
+<p align="center">
+  <img src="assets/logo.svg" width="72" height="72" alt="agent-swap logo">
+</p>
+
+<h1 align="center">agent-swap</h1>
+
+<p align="center">
+  <strong>Switch Claude Code accounts without logging out — and see Codex and Muse usage in the same place.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/woorichicken/agent-swap/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/woorichicken/agent-swap/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+"></a>
+</p>
+
+<p align="center">
+  <a href="https://agent-swap.solhun.com">Website</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#menu-bar-macos">Menu bar</a> ·
+  <a href="https://github.com/woorichicken/agent-swap/issues">Report a bug</a>
+</p>
+
+<p align="center">
+  <img src="assets/demo.gif" width="760" alt="aswap list shows usage for every Claude account plus Codex and Muse, then cswap auto checks the switch threshold">
+</p>
+
+## Highlights
+
+- **Switch without logging out.** Keep several Claude accounts and move between them from the Claude Code CLI or the VS Code extension.
+- **Switch before the limit.** `cswap auto` moves to another account before you hit a rate limit.
+- **Every limit in one place.** A live dashboard tracks usage for every account, and `aswap list` adds Codex and Muse.
+- **Run accounts in parallel.** Session mode keeps more than one account going at the same time.
+- **A macOS menu bar.** Usage at a glance, with a click to switch.
+
+## Quick start
+
+```bash
+uv tool install git+https://github.com/woorichicken/agent-swap
+
+# Log into Claude Code with your first account, then save it
+cswap add
+
+# Log in with another account (do not /logout first), save it too
+cswap add
+
+# Every account's 5-hour / 7-day usage, plus Codex and Muse
+aswap list
+
+# Switch, or let it switch for you before the limit
+cswap switch
+cswap auto --threshold 80
+```
+
+## Contents
+
+- [What's different from claude-swap](#whats-different-from-claude-swap)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Tips](#tips)
+- [How it works](#how-it-works)
+- [Data locations](#data-locations)
+- [Menu bar (macOS)](#menu-bar-macos)
+- [Advanced](#advanced)
+- [Uninstall](#uninstall)
+- [Requirements](#requirements)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## What's different from claude-swap
 
@@ -15,8 +82,6 @@ existing Claude accounts, data, and the `cswap` command, and adds:
 
 Codex and Muse keep one login each — agent-swap reads their usage but never
 switches their accounts.
-
-Multi-account switcher for Claude Code. Easily switch between multiple Claude accounts without logging out, or let it switch for you before you hit a rate limit. Track usage for every account in a live dashboard, and run accounts in parallel. Works with both the Claude Code CLI and the VS Code extension.
 
 ## Installation
 
@@ -283,6 +348,10 @@ On Linux/WSL, set `XDG_DATA_HOME` to override the default location.
 
 ## Menu bar (macOS)
 
+<p align="center">
+  <img src="assets/menubar.png" width="640" alt="agent-swap macOS menu bar showing usage for two Claude accounts, Codex, and Muse">
+</p>
+
 <details>
 <summary>Optional macOS menu bar app — usage at a glance, click to switch</summary>
 
@@ -473,6 +542,16 @@ pipx uninstall agent-swap
 - Python 3.12+
 - Claude Code installed and logged in
 
+## Contributing
+
+Bug reports and pull requests are welcome. [Open an issue](https://github.com/woorichicken/agent-swap/issues) with your OS, the command you ran, and its output, and remove account emails first.
+
+To run the tests:
+
+```bash
+uv run pytest
+```
+
 ## License
 
-MIT
+[MIT](LICENSE). agent-swap is a fork of [claude-swap](https://github.com/realiti4/claude-swap) by Onur Cetinkol.
