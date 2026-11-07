@@ -15,7 +15,7 @@ body:
     attributes:
       label: cswap version and install method
       description: Output of `cswap --version`, and whether you installed with uv, pipx, or from source.
-      placeholder: cswap 0.20.0, installed with uv
+      placeholder: cswap 0.1.0, installed with uv
     validations:
       required: true
   - type: dropdown

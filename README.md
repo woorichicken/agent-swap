@@ -176,13 +176,13 @@ installed, `muse`. Codex includes `primary` / `secondary` (`usedPercent` and
 and `reason`. Both carry `status` (`ok` or `unavailable`); failures include a
 `reason`. Set `ASWAP_CODEX_BIN` or `ASWAP_MUSE_BIN` to override the executable.
 
-Or let claude-swap auto-pick by remaining quota — `cswap switch --strategy best` (most quota left) or `--strategy next-available` (skip rate-limited accounts).
+Or let agent-swap auto-pick by remaining quota — `cswap switch --strategy best` (most quota left) or `--strategy next-available` (skip rate-limited accounts).
 
 **Note:** You usually don't need to restart — on Linux/Windows the new account is picked up automatically, and on macOS after the Keychain cache expires. To apply it instantly, restart Claude Code or reopen the VS Code extension tab. See [Tips](#tips) for the per-platform details.
 
 ### Automatic switching
 
-Let claude-swap watch your usage and switch for you. When the active account's 5-hour or 7-day window reaches the threshold (default 90%), it switches to the account with the most quota left — before you hit the limit, and safe to run while Claude Code is working:
+Let agent-swap watch your usage and switch for you. When the active account's 5-hour or 7-day window reaches the threshold (default 90%), it switches to the account with the most quota left — before you hit the limit, and safe to run while Claude Code is working:
 
 ```bash
 cswap auto                     # foreground loop, polls every 60s
@@ -313,7 +313,7 @@ cswap unclaimed --purge ID      # Drop one (deletes its bytes; recover with /log
 cswap tui                       # Interactive dashboard (also: bare `cswap`)
 cswap watch                     # Dashboard, opened on the live watch page
 cswap upgrade                   # Reinstall agent-swap from the fork repository
-cswap purge                     # Remove all claude-swap data
+cswap purge                     # Remove all agent-swap data
 ```
 
 The original flag spellings (`cswap --switch`, `cswap --list`, ...) keep working.
